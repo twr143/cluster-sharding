@@ -23,11 +23,13 @@ object Post {
   case class ChangeBody(postId: String, body: String) extends Command
   case class Publish(postId: String) extends Command
   case class UpdateTitle(postId: String, newTitle: String) extends Command
+  case class UpdateAuthor(postId: String, newAuthor: String) extends Command
   sealed trait Event
   case class PostAdded(content: PostContent) extends Event
   case class BodyChanged(body: String) extends Event
   case object PostPublished extends Event
   case class TitleUpdated(oldTitle: String, newTitle: String) extends Event
+  case class AuthorUpdated(newAuthor: String) extends Event
   val idExtractor: ShardRegion.ExtractEntityId = {
     case cmd: Command => (cmd.postId, cmd)
   }
@@ -41,6 +43,7 @@ object Post {
       case BodyChanged(b) => copy(content = content.copy(body = b))
       case PostPublished => copy(published = true)
       case TitleUpdated(o, n) => copy(content = content.copy(title = n))
+      case AuthorUpdated(n) => copy(content = content.copy(author = n))
     }
   }
 }
@@ -97,12 +100,20 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
         context.become(published)
         val c = state.content
         log.info("Post published: {}", c.title)
-        authorListing ! AuthorListing.PostSummary(c.author, postId, c.title)
+        val ps = AuthorListing.PostSummary(c.author, postId, c.title)
+        authorListing ! ps
+        sender() ! ps
       }
   }
 
   def published: Receive = {
     case GetContent(_) => sender() ! state.content
+    case UpdateAuthor(_, newAuthor) =>
+      persist(AuthorUpdated(newAuthor)) { evt =>
+        state = state.updated(evt)
+        log.info("Author changed: {}", state.content.author)
+      }
+
   }
 
   override def unhandled(msg: Any): Unit = msg match {

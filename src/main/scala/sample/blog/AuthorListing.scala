@@ -14,18 +14,20 @@ object AuthorListing {
 
   def props(): Props = Props(new AuthorListing)
 
-  case class PostSummary(author: String, postId: String, title: String)
-  case class GetPosts(author: String)
-  case class Posts(list: immutable.IndexedSeq[PostSummary])
+  sealed trait Command {
+    def author: String
+  }
+  case class PostSummary(author: String, postId: String, title: String) extends Command
+  case class GetPosts(author: String) extends Command
+  case class Posts(list: List[PostSummary])
+  case class RemovePost(author: String, postId: String) extends Command
 
   val idExtractor: ShardRegion.ExtractEntityId = {
-    case s: PostSummary => (s.author, s)
-    case m: GetPosts    => (m.author, m)
+    case c: Command => (c.author, c)
   }
 
   val shardResolver: ShardRegion.ExtractShardId = msg => msg match {
-    case s: PostSummary   => (math.abs(s.author.hashCode) % 100).toString
-    case GetPosts(author) => (math.abs(author.hashCode) % 100).toString
+    case c: Command   => (math.abs(c.author.hashCode) % 100).toString
   }
 
   val shardName: String = "AuthorListing"
@@ -39,7 +41,7 @@ class AuthorListing extends PersistentActor with ActorLogging {
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
 
-  var posts = Vector.empty[PostSummary]
+  var posts = List.empty[PostSummary]
 
   def receiveCommand = {
     case s: PostSummary =>
@@ -47,6 +49,13 @@ class AuthorListing extends PersistentActor with ActorLogging {
         posts :+= evt
         log.info("Post added to {}'s list: {}", s.author, s.title)
       }
+    case r: RemovePost =>
+      persist(r) { evt =>
+        val post = posts.filter(_.postId == r.postId).head
+        posts = posts.filter(ps => ps.postId != r.postId)
+        log.info("Post removed {} from {}'s list", r.postId, post.author)
+      }
+
     case GetPosts(_) =>
       sender() ! Posts(posts)
     case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
@@ -54,6 +63,8 @@ class AuthorListing extends PersistentActor with ActorLogging {
 
   override def receiveRecover: Receive = {
     case evt: PostSummary => posts :+= evt
+    case r: RemovePost =>
+      posts = posts.filter(ps => ps.postId != r.postId)
 
   }
 
