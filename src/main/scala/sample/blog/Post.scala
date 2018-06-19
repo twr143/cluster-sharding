@@ -82,6 +82,7 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
   def initial: Receive = {
     case GetContent(_) => sender() ! state.content
     case AddPost(_, content) =>
+      log.info("persistence id: {}", persistenceId)
       if (content.author != "" && content.title != "")
         persist(PostAdded(content)) { evt =>
           state = state.updated(evt)

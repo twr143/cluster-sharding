@@ -1,10 +1,10 @@
 import com.typesafe.sbt.SbtMultiJvm
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm
 
-val akkaVersion = "2.4.0"
+val akkaVersion = "2.4.20"
 
 val project = Project(
-  id = "akka-cluster-sharding-scala",
+  id = "cluster-sharding",
   base = file("."),
   settings = Defaults.coreDefaultSettings ++ SbtMultiJvm.multiJvmSettings ++ Seq(
     name := "akka-cluster-sharding-scala",
@@ -20,6 +20,7 @@ val project = Project(
       "org.fusesource.leveldbjni" % "leveldbjni-all" % "1.8",
       "org.scalatest" %% "scalatest" % "2.1.6" % "test",
       "commons-io" % "commons-io" % "2.4" % "test"),
+    mainClass in (Compile, run) := Some("sample.blog.BlogApp"),
     // make sure that MultiJvm test are compiled by the default test compilation
     compile in MultiJvm <<= (compile in MultiJvm) triggeredBy (compile in Test),
     // disable parallel tests
