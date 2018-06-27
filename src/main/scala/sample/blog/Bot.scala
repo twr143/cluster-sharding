@@ -16,7 +16,7 @@ class Bot extends Actor with ActorLogging {
   import Bot._
   import context.dispatcher
   implicit val timeout = Timeout(3.seconds)
-  val tickTask = context.system.scheduler.schedule(2.seconds, 1.seconds, self, Tick)
+  val tickTask = context.system.scheduler.schedule(2.seconds, 100.millis, self, Tick)
   val postRegion = ClusterSharding(context.system).shardRegion(Post.shardName)
   val listingsRegion = ClusterSharding(context.system).shardRegion(AuthorListing.shardName)
   val from = Cluster(context.system).selfAddress.hostPort
@@ -67,7 +67,7 @@ class Bot extends Actor with ActorLogging {
       listingsRegion ! AuthorListing.GetPosts(currentAuthor)
     case AuthorListing.Posts(summaries) =>
       log.info("Posts by {}: {}", currentAuthor, summaries.map(_.title).mkString("\n\t", "\n\t", ""))
-      context.become(changeAuthor(postId))
+      context.become(/*changeAuthor(postId)*/create)
   }
 
   def changeAuthor(postId: String): Receive = {

@@ -30,8 +30,8 @@ object BlogApp {
       // Create an Akka system
       val system = ActorSystem("ClusterSystem", config)
 
-      startupSharedJournal(system, startStore = (port == "2551"), path =
-        ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
+//      startupSharedJournal(system, startStore = (port == "2551"), path =
+//        ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
 
       val authorListingRegion = ClusterSharding(system).start(
         typeName = AuthorListing.shardName,
