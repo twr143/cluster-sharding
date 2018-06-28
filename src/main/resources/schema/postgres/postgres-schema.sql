@@ -21,3 +21,5 @@ CREATE TABLE IF NOT EXISTS snapshot (
   snapshot BYTEA NOT NULL,
   PRIMARY KEY(persistence_id, sequence_number)
 );
+
+ALTER table journal add COLUMN time TIMESTAMP DEFAULT now();
