@@ -25,10 +25,10 @@ object Post {
   case class UpdateTitle(postId: String, newTitle: String) extends Command
   case class UpdateAuthor(postId: String, newAuthor: String) extends Command
   sealed trait Event
-  object Event{
-//    implicit val format: Format[Event] = Json.format[Event]
+  object Event {
+    //    implicit val format: Format[Event] = Json.format[Event]
   }
-  case class PostAdded(content: PostContent) extends Event
+  case class PostAdded(postId: String, content: PostContent) extends Event
   case class BodyChanged(body: String) extends Event
   case object PostPublished extends Event
   case class TitleUpdated(oldTitle: String, newTitle: String) extends Event
@@ -42,7 +42,7 @@ object Post {
   val shardName: String = "Post"
   private case class State(content: PostContent, published: Boolean) {
     def updated(evt: Event): State = evt match {
-      case PostAdded(c) => copy(content = c)
+      case PostAdded(id, c) => copy(content = c)
       case BodyChanged(b) => copy(content = content.copy(body = b))
       case PostPublished => copy(published = true)
       case TitleUpdated(o, n) => copy(content = content.copy(title = n))
@@ -75,10 +75,10 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
 
   def initial: Receive = {
     case GetContent(_) => sender() ! state.content
-    case AddPost(_, content) =>
+    case AddPost(postId, content) =>
       log.info("persistence id: {}", persistenceId)
       if (content.author != "" && content.title != "")
-        persist(PostAdded(content)) { evt =>
+        persist(PostAdded(postId, content)) { evt =>
           state = state.updated(evt)
           context.become(created)
           log.info("New post saved: {}", state.content.title)
@@ -116,7 +116,6 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
         state = state.updated(evt)
         log.info("Author changed: {}", state.content.author)
       }
-
   }
 
   override def unhandled(msg: Any): Unit = msg match {
