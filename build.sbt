@@ -21,8 +21,9 @@ val project = Project(
       "org.scalatest" %% "scalatest" % "2.1.6" % "test",
       "commons-io" % "commons-io" % "2.4" % "test",
       "org.postgresql" % "postgresql" % "42.2.2",
-      "org.slf4j" % "slf4j-simple" % "1.7.12",
+      "ch.qos.logback" % "logback-classic" % "1.2.3",
       "org.json4s" %% "json4s-jackson" % "3.5.3",
+      "com.github.tminglei" %% "slick-pg" % "0.16.2",
     "com.github.dnvriend" %% "akka-persistence-jdbc" % "2.8.0"),
     mainClass in (Compile, run) := Some("sample.blog.BlogApp"),
     // make sure that MultiJvm test are compiled by the default test compilation

@@ -23,3 +23,15 @@ CREATE TABLE IF NOT EXISTS snapshot (
 );
 
 ALTER table journal add COLUMN time TIMESTAMP DEFAULT now();
+
+create table es_posts
+(
+	"ID" uuid not null
+		constraint es_posts_pkey
+			primary key,
+	author varchar not null,
+	title varchar not null,
+	body varchar not null,
+	  added TIMESTAMP
+);
+

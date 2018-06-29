@@ -1,4 +1,6 @@
 package sample.blog
+import java.time.{OffsetDateTime, ZonedDateTime}
+
 import scala.concurrent.duration._
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -28,24 +30,26 @@ object Post {
   object Event {
     //    implicit val format: Format[Event] = Json.format[Event]
   }
-  case class PostAdded(postId: String, content: PostContent) extends Event
-  case class BodyChanged(body: String) extends Event
+  case class PostAdded(postId: String, content: PostContent, time: OffsetDateTime) extends Event
+  case class BodyChanged(postId: String, body: String) extends Event
   case object PostPublished extends Event
-  case class TitleUpdated(oldTitle: String, newTitle: String) extends Event
+  case class TitleUpdated(postId: String, oldTitle: String, newTitle: String) extends Event
   case class AuthorUpdated(newAuthor: String) extends Event
   val idExtractor: ShardRegion.ExtractEntityId = {
     case cmd: Command => (cmd.postId, cmd)
   }
+
   val shardResolver: ShardRegion.ExtractShardId = {
     case cmd: Command => (math.abs(cmd.postId.hashCode) % 100).toString
   }
+
   val shardName: String = "Post"
-  private case class State(content: PostContent, published: Boolean) {
+  private case class State(content: PostContent, published: Boolean, added: OffsetDateTime) {
     def updated(evt: Event): State = evt match {
-      case PostAdded(id, c) => copy(content = c)
-      case BodyChanged(b) => copy(content = content.copy(body = b))
+      case PostAdded(id, c, time) => copy(content = c, added = time)
+      case BodyChanged(_, b) => copy(content = content.copy(body = b))
       case PostPublished => copy(published = true)
-      case TitleUpdated(o, n) => copy(content = content.copy(title = n))
+      case TitleUpdated(_, o, n) => copy(content = content.copy(title = n))
       case AuthorUpdated(n) => copy(content = content.copy(author = n))
     }
   }
@@ -58,7 +62,8 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
 
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
-  private var state = State(PostContent.empty, false)
+
+  private var state = State(PostContent.empty, false, OffsetDateTime.now())
 
   override def receiveRecover: Receive = {
     case evt: PostAdded =>
@@ -78,24 +83,24 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
     case AddPost(postId, content) =>
       log.info("persistence id: {}", persistenceId)
       if (content.author != "" && content.title != "")
-        persist(PostAdded(postId, content)) { evt =>
+        persist(PostAdded(postId, content, OffsetDateTime.now())) { evt =>
           state = state.updated(evt)
           context.become(created)
-          log.info("New post saved: {}", state.content.title)
+          log.debug("New post saved: {}", state.content.title)
         }
   }
 
   def created: Receive = {
     case GetContent(_) => sender() ! state.content
-    case ChangeBody(_, body) =>
-      persist(BodyChanged(body)) { evt =>
+    case ChangeBody(id, body) =>
+      persist(BodyChanged(id, body)) { evt =>
         state = state.updated(evt)
-        log.info("Post changed: {}", state.content.title)
+        log.debug("Post changed: {}", state.content.title)
       }
-    case UpdateTitle(_, newTitle) =>
-      persist(TitleUpdated(state.content.title, newTitle)) { evt =>
+    case UpdateTitle(id, newTitle) =>
+      persist(TitleUpdated(id, state.content.title, newTitle)) { evt =>
         state = state.updated(evt)
-        log.info("Title changed: {}", state.content.title)
+        log.debug("Title changed: {}", state.content.title)
       }
     case Publish(postId) =>
       persist(PostPublished) { evt =>
