@@ -7,7 +7,9 @@
     <root level="${log.root:-info}">
         <appender-ref ref="STDOUT" />
     </root>
-    <logger name="sample.blog"          level="INFO" />
+    <!--<logger name="sample.blog"          level="warn" />-->
+    <logger name="sample.blog.util.MyPostgresProfile"          level="warn" />
+    <logger name="sample.blog.read.PostEventListener"          level="warn" />
     <logger name="slick.basic.BasicBackend.action"          level="${log.action:-info}" />
     <logger name="slick.basic.BasicBackend.stream"          level="${log.stream:-info}" />
     <logger name="slick.compiler"                           level="${log.qcomp:-info}" />

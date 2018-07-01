@@ -1,9 +1,10 @@
 package sample.blog.util
 
 import com.github.tminglei.slickpg._
-import slick.driver.JdbcProfile
-import slick.profile.Capability
-
+import slick.basic.Capability
+/**
+  * helps dealing with OffsetDateTime type in slick Table mappings
+  */
 trait MyPostgresProfile extends ExPostgresProfile
                           with PgArraySupport
                           with PgDate2Support
@@ -16,7 +17,7 @@ trait MyPostgresProfile extends ExPostgresProfile
 
   // Add back `capabilities.insertOrUpdate` to enable native `upsert` support; for postgres 9.5+
   override protected def computeCapabilities: Set[Capability] = 
-    super.computeCapabilities + JdbcProfile.capabilities.insertOrUpdate
+    super.computeCapabilities + slick.jdbc.JdbcCapabilities.insertOrUpdate
 
   override val api = MyAPI
 
