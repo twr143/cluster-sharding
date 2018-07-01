@@ -1,6 +1,6 @@
 package sample.blog.read
+import java.sql.BatchUpdateException
 import java.util.UUID
-
 import akka.NotUsed
 import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props}
 import akka.event.Logging
@@ -11,13 +11,12 @@ import akka.stream.{ActorMaterializer, Materializer}
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
-
 import scala.concurrent.duration._
 import sample.blog.util.MyPostgresProfile.api._
 import slick.jdbc.JdbcProfile
 import slick.sql.FixedSqlAction
-
 import scala.concurrent.Future
+import scala.util.{Failure, Success}
 /**
   * Created by Ilya Volynin on 28.06.2018 at 13:44.
   *
@@ -43,7 +42,10 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   val setupAction: DBIO[Unit] = DBIO.seq(postList.schema.truncate /*, postList.schema.create*/)
 
-  db.run(setupAction)
+  db.run(setupAction.asTry).map {
+    case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
+    case Success(x) => x
+  }
 
   var currentList = List.empty[postList.shaped.shape.Unpacked]
 
@@ -77,7 +79,10 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       }
     case Flush =>
       log.info("flush task works, size {} ", currentList.size)
-      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction))
+      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).asTry).map {
+        case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
+        case Success(x) => x
+      }
       currentList = List.empty[postList.shaped.shape.Unpacked]
       updateAction = DBIOAction.successful(0)
   }
