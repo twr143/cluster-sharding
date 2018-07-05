@@ -1,6 +1,5 @@
 package sample.blog
 import java.time.{OffsetDateTime, ZonedDateTime}
-
 import scala.concurrent.duration._
 import akka.actor.ActorLogging
 import akka.actor.ActorRef
@@ -26,15 +25,17 @@ object Post {
   case class Publish(postId: String) extends Command
   case class UpdateTitle(postId: String, newTitle: String) extends Command
   case class UpdateAuthor(postId: String, newAuthor: String) extends Command
+  case class Remove(postId: String) extends Command
   sealed trait Event
   object Event {
     //    implicit val format: Format[Event] = Json.format[Event]
   }
   case class PostAdded(postId: String, content: PostContent, time: OffsetDateTime) extends Event
   case class BodyChanged(postId: String, body: String) extends Event
-  case object PostPublished extends Event
+  case class PostPublished(postId: String) extends Event
   case class TitleUpdated(postId: String, oldTitle: String, newTitle: String) extends Event
   case class AuthorUpdated(newAuthor: String) extends Event
+  case class Removed(postId: String) extends Event
   val idExtractor: ShardRegion.ExtractEntityId = {
     case cmd: Command => (cmd.postId, cmd)
   }
@@ -48,7 +49,7 @@ object Post {
     def updated(evt: Event): State = evt match {
       case PostAdded(id, c, time) => copy(content = c, added = time)
       case BodyChanged(_, b) => copy(content = content.copy(body = b))
-      case PostPublished => copy(published = true)
+      case PostPublished(_) => copy(published = true)
       case TitleUpdated(_, o, n) => copy(content = content.copy(title = n))
       case AuthorUpdated(n) => copy(content = content.copy(author = n))
     }
@@ -69,9 +70,11 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
     case evt: PostAdded =>
       context.become(created)
       state = state.updated(evt)
-    case evt@PostPublished =>
+    case evt: PostPublished =>
       context.become(published)
       state = state.updated(evt)
+    case evt: Removed =>
+      context.become(removed)
     case evt: Event => state =
       state.updated(evt)
   }
@@ -90,7 +93,7 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
         }
   }
 
-  def created: Receive = {
+  def created: Receive = remove orElse {
     case GetContent(_) => sender() ! state.content
     case ChangeBody(id, body) =>
       persist(BodyChanged(id, body)) { evt =>
@@ -103,18 +106,18 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
         log.debug("Title changed: {}", state.content.title)
       }
     case Publish(postId) =>
-      persist(PostPublished) { evt =>
+      persist(PostPublished(postId)) { evt =>
         state = state.updated(evt)
         context.become(published)
         val c = state.content
         log.info("Post published: {}", c.title)
-        val ps = AuthorListing.PostSummary(c.author, postId, c.title)
+        val ps = AuthorListing.PostSummary(c.author, postId, c.title, OffsetDateTime.now())
         authorListing ! ps
         sender() ! ps
       }
   }
 
-  def published: Receive = {
+  def published: Receive = remove orElse {
     case GetContent(_) => sender() ! state.content
     case UpdateAuthor(_, newAuthor) =>
       persist(AuthorUpdated(newAuthor)) { evt =>
@@ -123,8 +126,22 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
       }
   }
 
+  def remove: Receive = {
+    case Remove(postId) => persist(Removed(postId)) { evt =>
+      log.debug("Post removed: {}", state.content.title)
+      context.become(removed)
+    }
+  }
+
+  def removed: Receive = {
+    case msg: Any =>
+      log.info("unhandled message in removed {}", msg)
+      unhandled(msg)
+  }
+
   override def unhandled(msg: Any): Unit = msg match {
     case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
-    case _ => super.unhandled(msg)
+    case _ =>
+      super.unhandled(msg)
   }
 }

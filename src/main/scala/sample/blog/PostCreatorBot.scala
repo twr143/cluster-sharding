@@ -1,24 +1,29 @@
 package sample.blog
 import java.util.UUID
 import scala.concurrent.duration._
-import akka.actor.Actor
+import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.pattern._
-import akka.actor.ActorLogging
 import akka.cluster.Cluster
 import akka.cluster.sharding.ClusterSharding
 import akka.util.Timeout
 import sample.blog.AuthorListing.Posts
 import scala.util.Random
-object Bot {
+object PostCreatorBot {
   private case object Tick
+  def props(authors: Map[Int, String]): Props =
+    Props(new PostCreatorBot(authors))
 }
-class Bot extends Actor with ActorLogging {
-  import Bot._
+class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging {
+  import PostCreatorBot._
   import context.dispatcher
   implicit val timeout = Timeout(3.seconds)
-  val tickTask = context.system.scheduler.schedule(2.seconds, 500.millis, self, Tick)
+
+  val tickTask = context.system.scheduler.schedule(1.seconds, 100.millis, self, Tick)
+
   val postRegion = ClusterSharding(context.system).shardRegion(Post.shardName)
+
   val listingsRegion = ClusterSharding(context.system).shardRegion(AuthorListing.shardName)
+
   val from = Cluster(context.system).selfAddress.hostPort
 
   override def postStop(): Unit = {
@@ -27,7 +32,6 @@ class Bot extends Actor with ActorLogging {
   }
 
   var n = 0
-  val authors = Map(0 -> "Patrik", 1 -> "Martin", 2 -> "Roland", 3 -> "Björn", 4 -> "Endre")
 
   def currentAuthor = authors(n % authors.size)
 
@@ -67,7 +71,7 @@ class Bot extends Actor with ActorLogging {
       listingsRegion ! AuthorListing.GetPosts(currentAuthor)
     case AuthorListing.Posts(summaries) =>
       log.info("Posts by {}: {}", currentAuthor, summaries.map(_.title).mkString("\n\t", "\n\t", ""))
-      context.become(/*changeAuthor(postId)*/create)
+      context.become(/*changeAuthor(postId)*/ create)
   }
 
   def changeAuthor(postId: String): Receive = {

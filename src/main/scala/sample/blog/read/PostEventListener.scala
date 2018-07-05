@@ -1,9 +1,9 @@
 package sample.blog.read
 import java.sql.BatchUpdateException
 import java.util.UUID
+
 import akka.NotUsed
-import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props}
-import akka.event.Logging
+import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props, Terminated}
 import akka.persistence.jdbc.query.scaladsl.JdbcReadJournal
 import akka.persistence.query.{EventEnvelope, PersistenceQuery}
 import akka.stream.scaladsl.{Sink, Source}
@@ -11,11 +11,10 @@ import akka.stream.{ActorMaterializer, Materializer}
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
+
 import scala.concurrent.duration._
 import sample.blog.util.MyPostgresProfile.api._
-import slick.jdbc.JdbcProfile
-import slick.sql.FixedSqlAction
-import scala.concurrent.Future
+import akka.pattern._
 import scala.util.{Failure, Success}
 /**
   * Created by Ilya Volynin on 28.06.2018 at 13:44.
@@ -57,7 +56,13 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
     postList.filter(_.id === id).map(_.title)
   }
 
+  val filterPost = Compiled { id: Rep[UUID] =>
+    postList.filter(_.id === id)
+  }
+
   var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
+
+  var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
 
   override def receive: Receive = {
     case StreamCompleted =>
@@ -71,24 +76,37 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
         case BodyChanged(id, b) =>
           updateAction = updateAction.andThen(filterPostAndGetBody(UUID.fromString(id)).update(b))
           log.info("post body changed {} {}", id, b)
-        case PostPublished =>
+        case PostPublished(id) =>
         case TitleUpdated(id, o, n) =>
           updateAction = updateAction.andThen(filterPostAndGetTitle(UUID.fromString(id)).update(n))
           log.info("post title changed {} {}", id, n)
         case AuthorUpdated(n) =>
+        case Removed(postId) =>
+          deleteAction = deleteAction.andThen(filterPost(UUID.fromString(postId)).delete)
+          log.warning("post deleted {} in event list-r", postId)
       }
     case Flush =>
       log.info("flush task works, size {} ", currentList.size)
-      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).asTry).map {
+      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
       }
       currentList = List.empty[postList.shaped.shape.Unpacked]
       updateAction = DBIOAction.successful(0)
+      deleteAction = DBIOAction.successful(0)
+    case Stop =>
+      flushTask.cancel()
+      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
+        case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
+        case Success(x) => x
+      }.map{_ => db.close(); Stopped}.pipeTo(sender())
   }
+
   private case object Flush
 }
 object PostEventListener {
   case object StreamCompleted
+  case object Stop
+  case object Stopped
   def props(db: Database) = Props(new PostEventListener(db))
 }
