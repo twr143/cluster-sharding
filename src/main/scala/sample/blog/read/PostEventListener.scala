@@ -1,7 +1,6 @@
 package sample.blog.read
 import java.sql.BatchUpdateException
 import java.util.UUID
-
 import akka.NotUsed
 import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props, Terminated}
 import akka.persistence.jdbc.query.scaladsl.JdbcReadJournal
@@ -11,7 +10,6 @@ import akka.stream.{ActorMaterializer, Materializer}
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
-
 import scala.concurrent.duration._
 import sample.blog.util.MyPostgresProfile.api._
 import akka.pattern._
@@ -96,12 +94,17 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       deleteAction = DBIOAction.successful(0)
     case Stop =>
       flushTask.cancel()
-      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
+      /*
+      * delay is necessary due to possible shard coordinator error:
+      * *** (a.c.s.DDataShardCoordinator) The ShardCoordinator was unable to update a distributed state
+      * within 'updating-state-timeout': 5000 millis (retrying), event=ShardHomeDeallocated(30)
+      * */
+      after(1000.millis, context.system.scheduler)(db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
-      }.map{_ => db.close(); Stopped}.pipeTo(sender())
-  }
+      }.map { _ => db.close(); Stopped }.pipeTo(sender()))
 
+  }
   private case object Flush
 }
 object PostEventListener {

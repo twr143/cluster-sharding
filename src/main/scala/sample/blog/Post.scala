@@ -135,7 +135,6 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
 
   def removed: Receive = {
     case msg: Any =>
-      log.info("unhandled message in removed {}", msg)
       unhandled(msg)
   }
 

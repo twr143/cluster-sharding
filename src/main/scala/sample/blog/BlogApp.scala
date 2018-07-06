@@ -1,8 +1,6 @@
 package sample.blog
-
 import akka.Done
 import akka.actor.CoordinatedShutdown.ClusterLeavingReason
-
 import scala.concurrent.duration._
 import com.typesafe.config.ConfigFactory
 import akka.actor._
@@ -14,7 +12,6 @@ import sample.blog.read.PostEventListener._
 import slick.basic.DatabaseConfig
 import slick.jdbc.JdbcProfile
 import slick.jdbc.PostgresProfile.api._
-
 import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success}
 object BlogApp {
@@ -55,9 +52,11 @@ object BlogApp {
           import akka.pattern.ask
           import system.dispatcher
           implicit val timeout = Timeout(5.seconds)
-          (eventListener ? PostEventListener.Stop).map{
-            case Stopped => Done
-          }
+          for {
+            _ <- postCreator ? PostCreatorBot.Stop
+            //            _ <- chiefEditor ? ChiefEditorBot.Stop
+            _ <- eventListener ? PostEventListener.Stop
+          } yield Done
         }
         System.in.read()
         println("shutdown in progress....")

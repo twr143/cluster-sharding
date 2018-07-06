@@ -1,14 +1,18 @@
 package sample.blog
 import java.util.UUID
+
 import scala.concurrent.duration._
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props}
 import akka.pattern._
 import akka.cluster.Cluster
 import akka.cluster.sharding.ClusterSharding
 import akka.util.Timeout
 import sample.blog.AuthorListing.Posts
+
 import scala.util.Random
 object PostCreatorBot {
+  case object Stop
+  case object Stopped
   private case object Tick
   def props(authors: Map[Int, String]): Props =
     Props(new PostCreatorBot(authors))
@@ -26,11 +30,6 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
 
   val from = Cluster(context.system).selfAddress.hostPort
 
-  override def postStop(): Unit = {
-    super.postStop()
-    tickTask.cancel()
-  }
-
   var n = 0
 
   def currentAuthor = authors(n % authors.size)
@@ -39,7 +38,7 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
 
   def receive = create
 
-  val create: Receive = {
+  val create: Receive = stop orElse {
     case Tick =>
       val postId = UUID.randomUUID().toString
       n += 1
@@ -48,25 +47,25 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
       context.become(edit(postId))
   }
 
-  def edit(postId: String): Receive = {
+  def edit(postId: String): Receive = stop orElse {
     case Tick =>
       postRegion ! Post.ChangeBody(postId, "Something very interesting ...")
       context.become(updateTitle(postId))
   }
 
-  def updateTitle(postId: String): Receive = {
+  def updateTitle(postId: String): Receive = stop orElse {
     case Tick =>
       postRegion ! Post.UpdateTitle(postId, title + " new one")
       context.become(publish(postId))
   }
 
-  def publish(postId: String): Receive = {
+  def publish(postId: String): Receive = stop orElse {
     case Tick =>
       postRegion ! Post.Publish(postId)
       context.become(list(postId))
   }
 
-  def list(postId: String): Receive = {
+  def list(postId: String): Receive = stop orElse {
     case Tick =>
       listingsRegion ! AuthorListing.GetPosts(currentAuthor)
     case AuthorListing.Posts(summaries) =>
@@ -74,7 +73,7 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
       context.become(/*changeAuthor(postId)*/ create)
   }
 
-  def changeAuthor(postId: String): Receive = {
+  def changeAuthor(postId: String): Receive = stop orElse {
     case Tick =>
       (listingsRegion ? AuthorListing.GetPosts(currentAuthor)).mapTo[Posts].map {
         posts =>
@@ -87,5 +86,12 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
           log.info("reassigned {} from {} to {}", title, author, newAuthor)
           context.become(create)
       }
+  }
+
+  def stop: Receive = {
+    case Stop =>
+      tickTask.cancel()
+      self ! PoisonPill
+      sender() ! Stopped
   }
 }
