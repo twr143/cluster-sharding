@@ -35,7 +35,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   val willNotCompleteTheStream: Source[EventEnvelope, NotUsed] = readJournal.eventsByTag("postTag", 0L)
 
-  private val completed = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.both).run()
+  private val completed = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.left).run()
 
   private val flushTask = context.system.scheduler.schedule(1.second, 2.second, self, Flush)
 
@@ -97,7 +97,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
-      }.map { _ => db.close(); completed._1.shutdown(); Stopped }.pipeTo(sender())
+      }.map { _ => db.close(); completed.shutdown(); Stopped }.pipeTo(sender())
   }
   private case object Flush
 }
