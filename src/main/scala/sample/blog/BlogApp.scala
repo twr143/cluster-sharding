@@ -53,14 +53,22 @@ object BlogApp {
           import system.dispatcher
           implicit val timeout = Timeout(5.seconds)
           for {
-            _ <- postCreator ? PostCreatorBot.Stop
+            //            _ <- postCreator ? PostCreatorBot.Stop
             //            _ <- chiefEditor ? ChiefEditorBot.Stop
             _ <- eventListener ? PostEventListener.Stop
           } yield Done
         }
         System.in.read()
         println("shutdown in progress....")
-        val done: Future[Done] = CoordinatedShutdown(system).run(reason = ClusterLeavingReason)
+        import system.dispatcher
+        implicit val timeout = Timeout(5.seconds)
+        val f = for {
+          _ <- postCreator ? PostCreatorBot.Stop
+          _ <- chiefEditor ? ChiefEditorBot.Stop
+          _ <- after(500.millis, system.scheduler)(Future.successful(()))
+          done <- CoordinatedShutdown(system).run(reason = ClusterLeavingReason)
+        } yield done
+        Await.ready(f, 10.seconds)
       }
     }
   }

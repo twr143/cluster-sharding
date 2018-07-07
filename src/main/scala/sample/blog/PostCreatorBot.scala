@@ -1,6 +1,5 @@
 package sample.blog
 import java.util.UUID
-
 import scala.concurrent.duration._
 import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props}
 import akka.pattern._
@@ -8,7 +7,6 @@ import akka.cluster.Cluster
 import akka.cluster.sharding.ClusterSharding
 import akka.util.Timeout
 import sample.blog.AuthorListing.Posts
-
 import scala.util.Random
 object PostCreatorBot {
   case object Stop
@@ -38,13 +36,20 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
 
   def receive = create
 
+  var stopped = false
+
   val create: Receive = stop orElse {
     case Tick =>
-      val postId = UUID.randomUUID().toString
-      n += 1
-      title = s"Post $n from $from"
-      postRegion ! Post.AddPost(postId, Post.PostContent(currentAuthor, title, "..."))
-      context.become(edit(postId))
+      if (!stopped) {
+        val postId = UUID.randomUUID().toString
+        n += 1
+        title = s"Post $n from $from"
+        postRegion ! Post.AddPost(postId, Post.PostContent(currentAuthor, title, "..."))
+        context.become(edit(postId))
+      } else {
+        tickTask.cancel()
+        self ! PoisonPill
+      }
   }
 
   def edit(postId: String): Receive = stop orElse {
@@ -90,8 +95,7 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
 
   def stop: Receive = {
     case Stop =>
-      tickTask.cancel()
-      self ! PoisonPill
+      stopped = true
       sender() ! Stopped
   }
 }

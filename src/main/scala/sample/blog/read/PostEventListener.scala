@@ -5,8 +5,8 @@ import akka.NotUsed
 import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props, Terminated}
 import akka.persistence.jdbc.query.scaladsl.JdbcReadJournal
 import akka.persistence.query.{EventEnvelope, PersistenceQuery}
-import akka.stream.scaladsl.{Sink, Source}
-import akka.stream.{ActorMaterializer, Materializer}
+import akka.stream.scaladsl.{Keep, Sink, Source}
+import akka.stream.{ActorMaterializer, KillSwitches, Materializer}
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
@@ -27,11 +27,15 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   implicit val ec = context.dispatcher
 
+  var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
+
+  var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
+
   val readJournal: JdbcReadJournal = PersistenceQuery(context.system).readJournalFor[JdbcReadJournal](JdbcReadJournal.Identifier)
 
   val willNotCompleteTheStream: Source[EventEnvelope, NotUsed] = readJournal.eventsByTag("postTag", 0L)
 
-  private val completed = willNotCompleteTheStream.runWith(Sink.actorRef(self, StreamCompleted))
+  private val completed = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.both).run()
 
   private val flushTask = context.system.scheduler.schedule(1.second, 2.second, self, Flush)
 
@@ -57,10 +61,6 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
   val filterPost = Compiled { id: Rep[UUID] =>
     postList.filter(_.id === id)
   }
-
-  var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
-
-  var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
 
   override def receive: Receive = {
     case StreamCompleted =>
@@ -94,16 +94,10 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       deleteAction = DBIOAction.successful(0)
     case Stop =>
       flushTask.cancel()
-      /*
-      * delay is necessary due to possible shard coordinator error:
-      * *** (a.c.s.DDataShardCoordinator) The ShardCoordinator was unable to update a distributed state
-      * within 'updating-state-timeout': 5000 millis (retrying), event=ShardHomeDeallocated(30)
-      * */
-      after(1000.millis, context.system.scheduler)(db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
+      db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
-      }.map { _ => db.close(); Stopped }.pipeTo(sender()))
-
+      }.map { _ => db.close(); completed._1.shutdown(); Stopped }.pipeTo(sender())
   }
   private case object Flush
 }
