@@ -27,10 +27,6 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   implicit val ec = context.dispatcher
 
-  var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
-
-  var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
-
   val readJournal: JdbcReadJournal = PersistenceQuery(context.system).readJournalFor[JdbcReadJournal](JdbcReadJournal.Identifier)
 
   val willNotCompleteTheStream: Source[EventEnvelope, NotUsed] = readJournal.eventsByTag("postTag", 0L)
@@ -42,6 +38,10 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
   val postList = TableQuery[Posts]
 
   val setupAction: DBIO[Unit] = DBIO.seq(postList.schema.truncate /*, postList.schema.create*/)
+
+  var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
+
+  var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
 
   db.run(setupAction.asTry).map {
     case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
