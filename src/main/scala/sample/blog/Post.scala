@@ -59,7 +59,7 @@ class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
   import Post._
   // self.path.parent.name is the type name (utf-8 URL-encoded)
   // self.path.name is the entry identifier (utf-8 URL-encoded)
-  override def persistenceId: String = self.path.parent.parent.name + "-" + self.path.name
+  override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)

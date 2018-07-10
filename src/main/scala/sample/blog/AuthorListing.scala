@@ -32,7 +32,7 @@ object AuthorListing {
 }
 class AuthorListing extends PersistentActor with ActorLogging {
   import AuthorListing._
-  override def persistenceId: String = self.path.parent.parent.name + "-" + self.path.name
+  override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
