@@ -20,7 +20,7 @@ class PostCreatorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
   import context.dispatcher
   implicit val timeout = Timeout(3.seconds)
 
-  val tickTask = context.system.scheduler.schedule(1.seconds, 100.millis, self, Tick)
+  val tickTask = context.system.scheduler.schedule(1.seconds, 20.millis, self, Tick)
 
   val postRegion = ClusterSharding(context.system).shardRegion(Post.shardName)
 

@@ -62,11 +62,27 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
     postList.filter(_.id === id)
   }
 
+  var count, firstIndex, lastIndex, firstTime, lastTime = 0L
+
+  val queryFirstLastSequence = sql"""SELECT count(*), min(ordering), max(ordering) FROM journal WHERE tags = 'postTag'""".as[(Long, Long, Long)]
+
+  override def preStart(): Unit = db.run(queryFirstLastSequence).map {
+    seq =>
+      count = seq.head._1
+      firstIndex = seq.head._2
+      lastIndex = seq.head._3
+  }
+
   override def receive: Receive = {
     case StreamCompleted =>
       log.warning("view shutting down")
       self ! PoisonPill
     case EventEnvelope(offset, persistenceId, sequenceNr, event) =>
+      val offsetValue = offset.asInstanceOf[akka.persistence.query.Sequence].value
+      if (offsetValue == firstIndex) firstTime = System.currentTimeMillis()
+      if (offsetValue == lastIndex) lastTime = System.currentTimeMillis()
+      //on my machine i7-4202MQ, 16 gigs memory, ssd
+      //20k events unwind for ~ 500 ms
       event match {
         case pa: PostAdded =>
           currentList :+= (UUID.fromString(pa.postId), pa.content.author, pa.content.title, pa.content.body, pa.time)
@@ -81,7 +97,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
         case AuthorUpdated(n) =>
         case Removed(postId) =>
           deleteAction = deleteAction.andThen(filterPost(UUID.fromString(postId)).delete)
-          log.warning("post deleted {} in event list-r", postId)
+          log.info("post deleted {} in event list-r", postId)
       }
     case Flush =>
       log.info("flush task works, size {} ", currentList.size)
@@ -94,6 +110,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       deleteAction = DBIOAction.successful(0)
     case Stop =>
       flushTask.cancel()
+      log.warning("unwinded: {} events, from sequence # {} up to {} for {} ms", count, firstIndex, lastIndex, lastTime - firstTime)
       db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
