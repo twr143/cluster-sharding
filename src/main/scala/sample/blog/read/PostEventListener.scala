@@ -1,18 +1,22 @@
 package sample.blog.read
 import java.sql.BatchUpdateException
 import java.util.UUID
+
 import akka.NotUsed
 import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props, Terminated}
 import akka.persistence.jdbc.query.scaladsl.JdbcReadJournal
 import akka.persistence.query.{EventEnvelope, PersistenceQuery}
 import akka.stream.scaladsl.{Keep, Sink, Source}
-import akka.stream.{ActorMaterializer, KillSwitches, Materializer}
+import akka.stream.{ActorMaterializer, KillSwitches, Materializer, UniqueKillSwitch}
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
+
 import scala.concurrent.duration._
 import sample.blog.util.MyPostgresProfile.api._
 import akka.pattern._
+
+import scala.collection.mutable
 import scala.util.{Failure, Success}
 /**
   * Created by Ilya Volynin on 28.06.2018 at 13:44.
@@ -31,7 +35,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   val willNotCompleteTheStream: Source[EventEnvelope, NotUsed] = readJournal.eventsByTag("postTag", 0L)
 
-  private val completed = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.left).run()
+  private val graph = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.left)
 
   private val flushTask = context.system.scheduler.schedule(1.second, 2.second, self, Flush)
 
@@ -48,7 +52,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
     case Success(x) => x
   }
 
-  var currentList = List.empty[postList.shaped.shape.Unpacked]
+  var currentList = scala.collection.mutable.ListBuffer.empty[postList.shaped.shape.Unpacked]
 
   val filterPostAndGetBody = Compiled { id: Rep[UUID] =>
     postList.filter(_.id === id).map(_.body)
@@ -66,12 +70,15 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   val queryFirstLastSequence = sql"""SELECT count(*), min(ordering), max(ordering) FROM journal WHERE tags = 'postTag'""".as[(Long, Long, Long)]
 
+  var completed: Option[UniqueKillSwitch] = None
+
+
   override def preStart(): Unit = db.run(queryFirstLastSequence).map {
     seq =>
       count = seq.head._1
       firstIndex = seq.head._2
       lastIndex = seq.head._3
-  }
+  }.map { _ => completed = Some(graph.run()) }
 
   override def receive: Receive = {
     case StreamCompleted =>
@@ -83,9 +90,10 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       if (offsetValue == lastIndex) lastTime = System.currentTimeMillis()
       //on my machine i7-4202MQ, 16 gigs memory, ssd
       //20k events unwind for ~ 500 ms
+      //300k events unwind for ~ 3s
       event match {
         case pa: PostAdded =>
-          currentList :+= (UUID.fromString(pa.postId), pa.content.author, pa.content.title, pa.content.body, pa.time)
+          currentList += ((UUID.fromString(pa.postId), pa.content.author, pa.content.title, pa.content.body, pa.time))
           log.info("post added in event listener {} {}", pa.postId, pa.content)
         case BodyChanged(id, b) =>
           updateAction = updateAction.andThen(filterPostAndGetBody(UUID.fromString(id)).update(b))
@@ -105,7 +113,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
       }
-      currentList = List.empty[postList.shaped.shape.Unpacked]
+      currentList = mutable.ListBuffer.empty[postList.shaped.shape.Unpacked]
       updateAction = DBIOAction.successful(0)
       deleteAction = DBIOAction.successful(0)
     case Stop =>
@@ -114,7 +122,7 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
-      }.map { _ => db.close(); completed.shutdown(); Stopped }.pipeTo(sender())
+      }.map { _ => db.close(); completed.map(_.shutdown()); Stopped }.pipeTo(sender())
   }
   private case object Flush
 }
