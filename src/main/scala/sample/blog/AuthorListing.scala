@@ -1,5 +1,6 @@
 package sample.blog
 import java.time.OffsetDateTime
+
 import scala.collection.immutable
 import scala.concurrent.duration._
 import akka.actor.ActorLogging
@@ -10,6 +11,8 @@ import akka.cluster.sharding.{ClusterSharding, ShardRegion}
 import akka.cluster.sharding.ShardRegion.Passivate
 import akka.persistence.{PersistentActor, SnapshotOffer}
 import sample.blog.Post.Remove
+
+import scala.collection.mutable.ListBuffer
 object AuthorListing {
   def props(): Props = Props(new AuthorListing)
   sealed trait Command {
@@ -17,7 +20,7 @@ object AuthorListing {
   }
   case class PostSummary(author: String, postId: String, title: String, published: OffsetDateTime) extends Command
   case class GetPosts(author: String) extends Command
-  case class Posts(list: List[PostSummary])
+  case class Posts(list: ListBuffer[PostSummary])
   case class RemovePost(author: String, postId: String) extends Command
   case class RemoveFirstN(author: String, n: Int) extends Command
   val idExtractor: ShardRegion.ExtractEntityId = {
@@ -37,7 +40,7 @@ class AuthorListing extends PersistentActor with ActorLogging {
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
 
-  var posts = List.empty[PostSummary]
+  var posts: ListBuffer[PostSummary] = ListBuffer.empty[PostSummary]
 
   val snapShotInterval = 5
 
@@ -46,7 +49,7 @@ class AuthorListing extends PersistentActor with ActorLogging {
   def receiveCommand = {
     case s: PostSummary =>
       persist(s) { evt =>
-        posts :+= evt
+        posts+=evt
         log.info("Post added to {}'s list: {}", s.author, s.title)
         if (posts.size % snapShotInterval == 0 && lastSequenceNr != 0)
           saveSnapshot(posts)
@@ -74,7 +77,7 @@ class AuthorListing extends PersistentActor with ActorLogging {
       posts = posts.filter(ps => ps.postId != r.postId)
     case r: RemoveFirstN =>
       posts = posts.drop(r.n)
-    case SnapshotOffer(_, snapshot: List[PostSummary]) ⇒
+    case SnapshotOffer(_, snapshot: ListBuffer[PostSummary]) ⇒
       log.info("post snapshot offer, size {}", snapshot.size)
       posts = snapshot
   }
