@@ -11,8 +11,6 @@ import akka.actor.Props
 import akka.cluster.Cluster
 import akka.cluster.sharding.{ClusterShardingSettings, ClusterSharding}
 import akka.persistence.Persistence
-import akka.persistence.journal.leveldb.SharedLeveldbJournal
-import akka.persistence.journal.leveldb.SharedLeveldbStore
 import akka.remote.testconductor.RoleName
 import akka.remote.testkit.MultiNodeConfig
 import akka.remote.testkit.MultiNodeSpec
@@ -26,14 +24,14 @@ object BlogSpec extends MultiNodeConfig {
   commonConfig(ConfigFactory.parseString("""
     akka.cluster.metrics.enabled=off
     akka.actor.provider = "akka.cluster.ClusterActorRefProvider"
-    akka.persistence.journal.plugin = "akka.persistence.journal.leveldb-shared"
-    akka.persistence.journal.leveldb-shared.store {
-      native = off
-      dir = "target/test-shared-journal"
-    }
-    akka.persistence.snapshot-store.plugin = "akka.persistence.snapshot-store.local"
+    akka.persistence.journal.plugin = "jdbc-journal"
+    akka.persistence.snapshot-store.plugin = "jdbc-snapshot-store"
     akka.persistence.snapshot-store.local.dir = "target/test-snapshots"
-    """))
+    jdbc-journal.slick.db.url = "jdbc:postgresql://localhost:5432/persistence?currentSchema=c_s_test"
+    jdbc-snapshot-store.slick.db.url = "jdbc:postgresql://localhost:5432/persistence?currentSchema=c_s_test"
+    jdbc-journal.slick.profile = "slick.jdbc.PostgresProfile$"
+    jdbc-snapshot-store.slick.profile = "slick.jdbc.PostgresProfile$"
+      """))
 }
 
 class BlogSpecMultiJvmNode1 extends BlogSpec
@@ -88,23 +86,6 @@ class BlogSpec extends MultiNodeSpec(BlogSpec)
   }
 
   "Sharded blog app" must {
-
-    "setup shared journal" in {
-      // start the Persistence extension
-      Persistence(system)
-      runOn(controller) {
-        system.actorOf(Props[SharedLeveldbStore], "store")
-      }
-      enterBarrier("peristence-started")
-
-      runOn(node1, node2) {
-        system.actorSelection(node(controller) / "user" / "store") ! Identify(None)
-        val sharedStore = expectMsgType[ActorIdentity].ref.get
-        SharedLeveldbJournal.setStore(sharedStore, system)
-      }
-
-      enterBarrier("after-1")
-    }
 
     "join cluster" in within(15.seconds) {
       join(node1, node1)

@@ -7,7 +7,7 @@ val project = Project(
   base = file("."),
   settings = Defaults.coreDefaultSettings ++ SbtMultiJvm.multiJvmSettings ++ Seq(
     name := "cluster-sharding",
-    version := "1.0",
+    version := "0.2",
     scalaVersion := "2.12.6",
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-cluster" % akkaVersion,
