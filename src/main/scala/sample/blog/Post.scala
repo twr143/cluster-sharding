@@ -8,7 +8,13 @@ import akka.actor.Props
 import akka.actor.ReceiveTimeout
 import akka.cluster.sharding.ShardRegion
 import akka.cluster.sharding.ShardRegion.Passivate
+import akka.dispatch.sysmsg.Create
 import akka.persistence.PersistentActor
+import akka.persistence.fsm.{LoggingPersistentFSM, PersistentFSM}
+import akka.persistence.fsm.PersistentFSM.FSMState
+import sample.blog.Post.{Event, StateData, Status}
+import sample.blog.util.FSMLoggingSupport
+import scala.reflect.{ClassTag, classTag}
 object Post {
   def props(authorListing: ActorRef): Props =
     Props(new Post(authorListing))
@@ -45,102 +51,110 @@ object Post {
   }
 
   val shardName: String = "Post"
-  private case class State(content: PostContent, published: Boolean, added: OffsetDateTime) {
-    def updated(evt: Event): State = evt match {
-      case PostAdded(id, c, time) => copy(content = c, added = time)
+  case class StateData(postId: String, content: PostContent, published: Boolean, added: OffsetDateTime) {
+    def updated(evt: Event): StateData = evt match {
+      case PostAdded(id, c, time) => copy(postId = id, content = c, added = time)
       case BodyChanged(_, b) => copy(content = content.copy(body = b))
       case PostPublished(_) => copy(published = true)
       case TitleUpdated(_, o, n) => copy(content = content.copy(title = n))
       case AuthorUpdated(n) => copy(content = content.copy(author = n))
     }
   }
+  sealed trait Status extends FSMState
+  case object Initial extends Status {
+    override def identifier: String = "Initial"
+  }
+  case object Created extends Status {
+    override def identifier: String = "Created"
+  }
+  case object Published extends Status {
+    override def identifier: String = "Published"
+  }
+  case object Removed extends Status {
+    override def identifier: String = "Removed"
+  }
 }
-class Post(authorListing: ActorRef) extends PersistentActor with ActorLogging {
+class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Event]
+  with ActorLogging
+  with LoggingPersistentFSM[Status, StateData, Event]
+  with FSMLoggingSupport[Status, StateData, Event] {
   import Post._
   // self.path.parent.name is the type name (utf-8 URL-encoded)
   // self.path.name is the entry identifier (utf-8 URL-encoded)
   override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
+  override def logDepth: Int = 8
+
+  override def domainEventClassTag: ClassTag[Post.Event] = classTag[Post.Event]
+
   // passivate the entity when no activity
-  context.setReceiveTimeout(2.minutes)
+  context.setReceiveTimeout(30.seconds)
 
-  private var state = State(PostContent.empty, false, OffsetDateTime.now())
+  startWith(Initial, StateData("", PostContent.empty, published = false, OffsetDateTime.now()))
 
-  override def receiveRecover: Receive = {
-    case evt: PostAdded =>
-      context.become(created)
-      state = state.updated(evt)
-    case evt: PostPublished =>
-      context.become(published)
-      state = state.updated(evt)
-    case evt: Removed =>
-      context.become(removed)
-    case evt: Event => state =
-      state.updated(evt)
-  }
-
-  override def receiveCommand: Receive = initial
-
-  def initial: Receive = {
-    case GetContent(_) => sender() ! state.content
-    case AddPost(postId, content) =>
-      log.info("persistence id: {}", persistenceId)
-      if (content.author != "" && content.title != "")
-        persist(PostAdded(postId, content, OffsetDateTime.now())) { evt =>
-          state = state.updated(evt)
-          context.become(created)
-          log.debug("New post saved: {}", state.content.title)
-        }
-  }
-
-  def created: Receive = remove orElse {
-    case GetContent(_) => sender() ! state.content
-    case ChangeBody(id, body) =>
-      persist(BodyChanged(id, body)) { evt =>
-        state = state.updated(evt)
-        log.debug("Post changed: {}", state.content.title)
-      }
-    case UpdateTitle(id, newTitle) =>
-      persist(TitleUpdated(id, state.content.title, newTitle)) { evt =>
-        state = state.updated(evt)
-        log.debug("Title changed: {}", state.content.title)
-      }
-    case Publish(postId) =>
-      persist(PostPublished(postId)) { evt =>
-        state = state.updated(evt)
-        context.become(published)
-        val c = state.content
-        log.info("Post published: {}", c.title)
-        val ps = AuthorListing.PostSummary(c.author, postId, c.title, OffsetDateTime.now())
-        authorListing ! ps
-        sender() ! ps
-      }
-  }
-
-  def published: Receive = remove orElse {
-    case GetContent(_) => sender() ! state.content
-    case UpdateAuthor(_, newAuthor) =>
-      persist(AuthorUpdated(newAuthor)) { evt =>
-        state = state.updated(evt)
-        log.info("Author changed: {}", state.content.author)
-      }
-  }
-
-  def remove: Receive = {
-    case Remove(postId) => persist(Removed(postId)) { evt =>
-      log.debug("Post removed: {}", state.content.title)
-      context.become(removed)
+  override def applyEvent(domainEvent: Post.Event, stateData: StateData): StateData =
+    domainEvent match {
+      case _: Removed => stateData
+      case evt: Post.Event =>
+        stateData.updated(evt)
     }
+
+  when(Initial) {
+    case Event(AddPost(postId, content), stateData) =>
+      log.info("persistence id: {}", persistenceId)
+      if (content.author != "" && content.title != "") {
+        log.debug("New post saved: {}", stateData.content.title)
+        goto(Created) applying PostAdded(postId, content, OffsetDateTime.now())
+      } else stay()
   }
 
-  def removed: Receive = {
-    case msg: Any =>
-      unhandled(msg)
+  when(Created)(getContent orElse {
+    case Event(ChangeBody(id, body), stateData) =>
+      log.debug("Post changed: {}", stateData.content.title)
+      stay() applying BodyChanged(id, body)
+    case Event(UpdateTitle(id, newTitle), stateData) =>
+      log.debug("Title changed: {}", stateData.content.title)
+      stay() applying TitleUpdated(id, stateData.content.title, newTitle)
+    case Event(Publish(postId), stateData) =>
+      goto(Published) applying PostPublished(postId)
+  })
+
+  when(Published)(getContent orElse remove orElse {
+    case Event(UpdateAuthor(_, newAuthor), stateData) =>
+      log.info("Author changed: {}", stateData.content.author)
+      stay() applying AuthorUpdated(newAuthor)
+  })
+
+  when(Removed) {
+    case Event(ReceiveTimeout, stateData) =>
+      context.parent ! Passivate(stopMessage = PoisonPill)
+      stay()
+    case Event(event, stateData) =>
+      log.info("event {} has come into removed in FSM for the author: {}", event, stateData.content.author)
+      stay()
   }
 
-  override def unhandled(msg: Any): Unit = msg match {
-    case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
-    case _ =>
-      super.unhandled(msg)
+  whenUnhandled {
+    case Event(command, stateData) =>
+      log.warning(s"Unhandled event: $command\n${prettyPrint(getLog)}")
+      stay()
+  }
+
+  onTransition {
+    case Created -> Published =>
+      val c = stateData.content
+      log.info("Post published: {}", c.title)
+      val ps = AuthorListing.PostSummary(c.author, stateData.postId, c.title, OffsetDateTime.now())
+      authorListing ! ps
+  }
+
+  def remove: StateFunction = {
+    case Event(Remove(postId), stateData) =>
+      log.debug("Post removed: {}", stateData.content.title)
+      goto(Removed) applying Removed(postId)
+  }
+
+  def getContent: StateFunction = {
+    case Event(GetContent(_), stateData) => stay() replying stateData.content
   }
 }
