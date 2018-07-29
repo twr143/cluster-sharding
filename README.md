@@ -1,10 +1,15 @@
 Cluster-sharding "BlogApp" lab based on a Lightbend [tutorial](https://github.com/typesafehub/activator-akka-cluster-sharding-scala/blob/master/tutorial/index.html)
 =====================================
 
-This is an elaborated example of Akka sharded persistent actors with Postgres-based storage. Kryo serialization is used for serializing commands and events. Also "query" sql views are populated (**es_** tables).
+This is the reworked version of the Akka sharded persistent actors example provided by Lightbend. 
+- The chosen plugin for persistent storage is by [Dennis Vriend](https://github.com/dnvriend/akka-persistence-jdbc). 
+- The database chosen is Postgres. 
+- Post representation has been transformed from the persistent actor to FSM
+- Kryo serialization is used for serializing commands and events. 
+- The "Query" sql view is populated: **es_post** table.
 
-## Business logic
-There are the two bots generating events. First one, **PostCreatorBot**, creates, edits and publishes the post for each author. The second one, **ChiefEditorBot**, removes 5 oldest posts for each author. Both bots act periodically in a self-scheduled manner.
+## "Business logic"
+There are the two bots generating events. The first one, **PostCreatorBot**, creates, edits and publishes the post for each author. The second one, **ChiefEditorBot**, removes 5 oldest posts for each author. Both bots act periodically in a self-scheduled manner.
 ## Installation and run
 
 1.  Create a Postgres database schema and configure the datasource in **\src\main\resources\postgres-application.conf**
