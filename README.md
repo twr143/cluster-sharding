@@ -18,3 +18,5 @@ There are the two bots generating events. The first one, **PostCreatorBot**, cre
     * Run the second cluster node: `sbt "run 2552"`
     * Run the managing node: `sbt "run 0"`
 4.  Make sure that the **journal**, **snapshot** and all **es_** tables are correctly populated.
+## License
+This source code is made available under the [Apache 2.0 License](http://www.apache.org/licenses/LICENSE-2.0)
