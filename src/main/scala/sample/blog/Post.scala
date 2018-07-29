@@ -13,7 +13,6 @@ import akka.persistence.PersistentActor
 import akka.persistence.fsm.{LoggingPersistentFSM, PersistentFSM}
 import akka.persistence.fsm.PersistentFSM.FSMState
 import sample.blog.Post.{Event, StateData, Status}
-import sample.blog.util.FSMLoggingSupport
 import scala.reflect.{ClassTag, classTag}
 object Post {
   def props(authorListing: ActorRef): Props =
@@ -76,8 +75,7 @@ object Post {
 }
 class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Event]
   with ActorLogging
-  with LoggingPersistentFSM[Status, StateData, Event]
-  with FSMLoggingSupport[Status, StateData, Event] {
+  with LoggingPersistentFSM[Status, StateData, Event]{
   import Post._
   // self.path.parent.name is the type name (utf-8 URL-encoded)
   // self.path.name is the entry identifier (utf-8 URL-encoded)
@@ -136,7 +134,7 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
 
   whenUnhandled {
     case Event(command, stateData) =>
-      log.warning(s"Unhandled event: $command\n${prettyPrint(getLog)}")
+      log.warning(s"Unhandled event: {} {}", command, stateData)
       stay()
   }
 
