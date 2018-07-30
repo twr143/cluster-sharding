@@ -63,7 +63,7 @@ object BlogApp {
         import system.dispatcher
         implicit val timeout = Timeout(5.seconds)
         val f = for {
-          _ <- postCreator ? PostCreatorBot.Stop
+          _ <- postCreator ? PostCreatorBot.stopEvent
           _ <- chiefEditor ? ChiefEditorBot.Stop
           _ <- after(500.millis, system.scheduler)(Future.successful(()))
           done <- CoordinatedShutdown(system).run(reason = ClusterLeavingReason)

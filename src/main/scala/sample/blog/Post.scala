@@ -75,7 +75,7 @@ object Post {
 }
 class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Event]
   with ActorLogging
-  with LoggingPersistentFSM[Status, StateData, Event]{
+  with LoggingPersistentFSM[Status, StateData, Event] {
   import Post._
   // self.path.parent.name is the type name (utf-8 URL-encoded)
   // self.path.name is the entry identifier (utf-8 URL-encoded)
@@ -97,16 +97,15 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
         stateData.updated(evt)
     }
 
-  when(Initial) {
+  when(Initial) (timeout orElse {
     case Event(AddPost(postId, content), stateData) =>
-      log.info("persistence id: {}", persistenceId)
       if (content.author != "" && content.title != "") {
         log.debug("New post saved: {}", stateData.content.title)
         goto(Created) applying PostAdded(postId, content, OffsetDateTime.now())
       } else stay()
-  }
+  })
 
-  when(Created)(getContent orElse {
+  when(Created)(getContent orElse timeout orElse {
     case Event(ChangeBody(id, body), stateData) =>
       log.debug("Post changed: {}", stateData.content.title)
       stay() applying BodyChanged(id, body)
@@ -117,20 +116,17 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
       goto(Published) applying PostPublished(postId)
   })
 
-  when(Published)(getContent orElse remove orElse {
+  when(Published)(getContent orElse remove orElse timeout orElse  {
     case Event(UpdateAuthor(_, newAuthor), stateData) =>
       log.info("Author changed: {}", stateData.content.author)
       stay() applying AuthorUpdated(newAuthor)
   })
 
-  when(Removed) {
-    case Event(ReceiveTimeout, stateData) =>
-      context.parent ! Passivate(stopMessage = PoisonPill)
-      stay()
+  when(Removed) (timeout orElse {
     case Event(event, stateData) =>
       log.info("event {} has come into removed in FSM for the author: {}", event, stateData.content.author)
       stay()
-  }
+  })
 
   whenUnhandled {
     case Event(command, stateData) =>
@@ -150,6 +146,12 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
     case Event(Remove(postId), stateData) =>
       log.debug("Post removed: {}", stateData.content.title)
       goto(Removed) applying Removed(postId)
+  }
+
+  def timeout: StateFunction = {
+    case Event(ReceiveTimeout, stateData) =>
+      context.parent ! Passivate(stopMessage = PoisonPill)
+      stay()
   }
 
   def getContent: StateFunction = {
