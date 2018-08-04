@@ -1,6 +1,7 @@
 Cluster-sharding "BlogApp" lab based on a Lightbend [tutorial](https://github.com/typesafehub/activator-akka-cluster-sharding-scala/blob/master/tutorial/index.html)
 =====================================
 
+
 This is the reworked version of the Akka sharded persistent actors example provided by Lightbend. 
 - The chosen plugin for persistent storage is by [Dennis Vriend](https://github.com/dnvriend/akka-persistence-jdbc). 
 - The database chosen is Postgres. 
@@ -20,3 +21,4 @@ There are the two bots generating events. The first one, **PostCreatorBot**, cre
 4.  Make sure that the **journal**, **snapshot** and all **es_** tables are correctly populated.
 ## License
 This source code is made available under the [Apache 2.0 License](http://www.apache.org/licenses/LICENSE-2.0)
+
