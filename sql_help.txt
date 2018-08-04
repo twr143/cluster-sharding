@@ -1,0 +1,1 @@
+GRANT all privileges ON SCHEMA c_s_test TO pers_user;

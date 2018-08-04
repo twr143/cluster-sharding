@@ -1,18 +1,19 @@
 package sample.blog
-
+import akka.Done
+import akka.actor.CoordinatedShutdown.ClusterLeavingReason
 import scala.concurrent.duration._
 import com.typesafe.config.ConfigFactory
-import akka.actor.ActorIdentity
-import akka.actor.ActorPath
-import akka.actor.ActorSystem
-import akka.actor.Identify
-import akka.actor.Props
-import akka.cluster.sharding.{ClusterShardingSettings, ClusterSharding}
-import akka.pattern.ask
-import akka.persistence.journal.leveldb.SharedLeveldbJournal
-import akka.persistence.journal.leveldb.SharedLeveldbStore
+import akka.actor._
+import akka.cluster.sharding.{ClusterSharding, ClusterShardingSettings}
+import akka.pattern._
 import akka.util.Timeout
-
+import sample.blog.read.PostEventListener
+import sample.blog.read.PostEventListener._
+import slick.basic.DatabaseConfig
+import slick.jdbc.JdbcProfile
+import slick.jdbc.PostgresProfile.api._
+import scala.concurrent.{Await, Future}
+import scala.util.{Failure, Success}
 object BlogApp {
   def main(args: Array[String]): Unit = {
     if (args.isEmpty)
@@ -26,13 +27,8 @@ object BlogApp {
       // Override the configuration of the port
       val config = ConfigFactory.parseString("akka.remote.netty.tcp.port=" + port).
         withFallback(ConfigFactory.load())
-
       // Create an Akka system
       val system = ActorSystem("ClusterSystem", config)
-
-      startupSharedJournal(system, startStore = (port == "2551"), path =
-        ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
-
       val authorListingRegion = ClusterSharding(system).start(
         typeName = AuthorListing.shardName,
         entityProps = AuthorListing.props(),
@@ -45,34 +41,36 @@ object BlogApp {
         settings = ClusterShardingSettings(system),
         extractEntityId = Post.idExtractor,
         extractShardId = Post.shardResolver)
-
-      if (port != "2551" && port != "2552")
-        system.actorOf(Props[Bot], "bot")
-    }
-
-    def startupSharedJournal(system: ActorSystem, startStore: Boolean, path: ActorPath): Unit = {
-      // Start the shared journal one one node (don't crash this SPOF)
-      // This will not be needed with a distributed journal
-      if (startStore)
-        system.actorOf(Props[SharedLeveldbStore], "store")
-      // register the shared journal
-      import system.dispatcher
-      implicit val timeout = Timeout(15.seconds)
-      val f = (system.actorSelection(path) ? Identify(None))
-      f.onSuccess {
-        case ActorIdentity(_, Some(ref)) => SharedLeveldbJournal.setStore(ref, system)
-        case _ =>
-          system.log.error("Shared journal not started at {}", path)
-          system.terminate()
+      if (port != "2551" && port != "2552") {
+        val authors = Map(0 -> "Patrik", 1 -> "Martin", 2 -> "Roland", 3 -> "Björn", 4 -> "Endre")
+        val postCreator = system.actorOf(PostCreatorBot.props(authors = authors), "pcbot")
+        val chiefEditor = system.actorOf(ChiefEditorBot.props(authors = authors), "cebot")
+        val database = Database.forConfig("slick.db", config)
+        val eventListener = system.actorOf(PostEventListener.props(database))
+        CoordinatedShutdown(system).addTask(
+          CoordinatedShutdown.PhaseBeforeServiceUnbind, "taskBeforeLeavingTheCluster") { () =>
+          import akka.pattern.ask
+          import system.dispatcher
+          implicit val timeout = Timeout(5.seconds)
+          for {
+            //            _ <- postCreator ? PostCreatorBot.Stop
+            //            _ <- chiefEditor ? ChiefEditorBot.Stop
+            _ <- eventListener ? PostEventListener.Stop
+          } yield Done
+        }
+        System.in.read()
+        println("shutdown in progress....")
+        import system.dispatcher
+        implicit val timeout = Timeout(5.seconds)
+        val f = for {
+          _ <- postCreator ? PostCreatorBot.stopEvent
+          _ <- chiefEditor ? ChiefEditorBot.Stop
+          _ <- after(500.millis, system.scheduler)(Future.successful(()))
+          done <- CoordinatedShutdown(system).run(reason = ClusterLeavingReason)
+        } yield done
+        Await.ready(f, 10.seconds)
       }
-      f.onFailure {
-        case _ =>
-          system.log.error("Lookup of shared journal at {} timed out", path)
-          system.terminate()
-      }
     }
-
   }
-
 }
 
