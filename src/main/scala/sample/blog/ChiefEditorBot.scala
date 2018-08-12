@@ -15,7 +15,7 @@ class ChiefEditorBot(authors: Map[Int, String]) extends Actor with ActorLogging 
   import context.dispatcher
   implicit val timeout = Timeout(3.seconds)
 
-  val tickTask = context.system.scheduler.schedule(5.seconds, 1000.millis, self, Tick)
+  val tickTask = context.system.scheduler.schedule(5.seconds, 10000.millis, self, Tick)
 
   val listingsRegion = ClusterSharding(context.system).shardRegion(AuthorListing.shardName)
 
