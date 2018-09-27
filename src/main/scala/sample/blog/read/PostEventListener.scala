@@ -1,7 +1,6 @@
 package sample.blog.read
 import java.sql.BatchUpdateException
 import java.util.UUID
-
 import akka.NotUsed
 import akka.actor.{Actor, ActorLogging, ActorSystem, PoisonPill, Props, Terminated}
 import akka.persistence.jdbc.query.scaladsl.JdbcReadJournal
@@ -11,43 +10,46 @@ import akka.stream.{ActorMaterializer, KillSwitches, Materializer, UniqueKillSwi
 import sample.blog.Post._
 import slick.dbio.{DBIOAction, Effect, NoStream}
 import slick.jdbc.PostgresProfile.backend.Database
-
 import scala.concurrent.duration._
 import sample.blog.util.MyPostgresProfile.api._
 import akka.pattern._
-
+import akka.stream.scaladsl.RunnableGraph
 import scala.collection.mutable
 import scala.util.{Failure, Success}
+
 /**
   * Created by Ilya Volynin on 28.06.2018 at 13:44.
   *
+  * in case config flag replay-journal is set to true
   * truncates es_posts table at the start
   * "unwinds" all post events at the start, refilling es_posts table
   * handles current post events updating es_posts table
   */
 class PostEventListener(db: Database) extends Actor with ActorLogging {
   import PostEventListener._
+
   implicit val mat: Materializer = ActorMaterializer()
 
   implicit val ec = context.dispatcher
 
-  val readJournal: JdbcReadJournal = PersistenceQuery(context.system).readJournalFor[JdbcReadJournal](JdbcReadJournal.Identifier)
+  val replayJournal = context.system.settings.config.getBoolean("replay-journal")
 
-  val willNotCompleteTheStream: Source[EventEnvelope, NotUsed] = readJournal.eventsByTag("postTag", 0L)
-
-  private val graph = willNotCompleteTheStream.viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.left)
+  private def getGraph(offset: Long): RunnableGraph[UniqueKillSwitch] =
+    PersistenceQuery(context.system).readJournalFor[JdbcReadJournal](JdbcReadJournal.Identifier)
+      .eventsByTag("postTag", offset).
+      viaMat(KillSwitches.single)(Keep.right).toMat(Sink.actorRef(self, StreamCompleted))(Keep.left)
 
   private val flushTask = context.system.scheduler.schedule(1.second, 2.second, self, Flush)
 
   val postList = TableQuery[Posts]
 
-  val setupAction: DBIO[Unit] = DBIO.seq(postList.schema.truncate /*, postList.schema.create*/)
+  val setupAction: DBIO[Unit] = DBIO.seq(postList.schema.truncate)
 
   var updateAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
 
   var deleteAction: DBIOAction[Int, NoStream, Effect.Write] = DBIOAction.successful(0)
 
-  db.run(setupAction.asTry).map {
+  if (replayJournal) db.run(setupAction.asTry).map {
     case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
     case Success(x) => x
   }
@@ -72,13 +74,12 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
 
   var completed: Option[UniqueKillSwitch] = None
 
-
   override def preStart(): Unit = db.run(queryFirstLastSequence).map {
     seq =>
       count = seq.head._1
       firstIndex = seq.head._2
       lastIndex = seq.head._3
-  }.map { _ => completed = Some(graph.run()) }
+  }.map { _ => completed = Some(getGraph(if (replayJournal) 0 else lastIndex + 1).run()) }
 
   override def receive: Receive = {
     case StreamCompleted =>
@@ -118,11 +119,12 @@ class PostEventListener(db: Database) extends Actor with ActorLogging {
       deleteAction = DBIOAction.successful(0)
     case Stop =>
       flushTask.cancel()
-      log.warning("unwinded: {} events, from sequence # {} up to {} for {} ms", count, firstIndex, lastIndex, lastTime - firstTime)
+      if (replayJournal)
+        log.warning("unwinded: {} events, from sequence # {} up to {} for {} ms", count, firstIndex, lastIndex, lastTime - firstTime)
       db.run(DBIO.seq(postList ++= currentList).andThen(updateAction).andThen(deleteAction).asTry).map {
         case Failure(ex) => log.error("error {} {}", ex.getMessage, ex.getCause)
         case Success(x) => x
-      }.map { _ => db.close(); completed.map(_.shutdown()); Stopped }.pipeTo(sender())
+      }.map { _ => /*db.close();*/ completed.map(_.shutdown()); Stopped }.pipeTo(sender())
   }
   private case object Flush
 }
