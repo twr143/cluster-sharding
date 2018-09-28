@@ -5,7 +5,7 @@ import sample.blog.AuthorListing.{PostSummary, PostSummaryEx}
 /**
   * Created by Ilya Volynin on 28.09.2018 at 11:47.
   */
-class ActorListingEventAdapter extends EventAdapter {
+class AuthorListingEventAdapter extends EventAdapter {
 
   override def manifest(event: Any): String = ""
 
