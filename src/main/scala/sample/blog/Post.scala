@@ -14,14 +14,18 @@ import akka.persistence.fsm.{LoggingPersistentFSM, PersistentFSM}
 import akka.persistence.fsm.PersistentFSM.FSMState
 import sample.blog.Post.{Event, StateData, Status}
 import scala.reflect.{ClassTag, classTag}
+
 object Post {
+
   def props(authorListing: ActorRef): Props =
     Props(new Post(authorListing))
   object PostContent {
+
     val empty = PostContent("", "", "")
   }
   case class PostContent(author: String, title: String, body: String)
   sealed trait Command {
+
     def postId: String
   }
   case class AddPost(postId: String, content: PostContent) extends Command
@@ -33,6 +37,7 @@ object Post {
   case class Remove(postId: String) extends Command
   sealed trait Event
   object Event {
+
     //    implicit val format: Format[Event] = Json.format[Event]
   }
   case class PostAdded(postId: String, content: PostContent, time: OffsetDateTime) extends Event
@@ -51,6 +56,7 @@ object Post {
 
   val shardName: String = "Post"
   case class StateData(postId: String, content: PostContent, published: Boolean, added: OffsetDateTime) {
+
     def updated(evt: Event): StateData = evt match {
       case PostAdded(id, c, time) => copy(postId = id, content = c, added = time)
       case BodyChanged(_, b) => copy(content = content.copy(body = b))
@@ -61,15 +67,19 @@ object Post {
   }
   sealed trait Status extends FSMState
   case object Initial extends Status {
+
     override def identifier: String = "Initial"
   }
   case object Created extends Status {
+
     override def identifier: String = "Created"
   }
   case object Published extends Status {
+
     override def identifier: String = "Published"
   }
   case object Removed extends Status {
+
     override def identifier: String = "Removed"
   }
 }
@@ -77,6 +87,7 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
   with ActorLogging
   with LoggingPersistentFSM[Status, StateData, Event] {
   import Post._
+
   // self.path.parent.name is the type name (utf-8 URL-encoded)
   // self.path.name is the entry identifier (utf-8 URL-encoded)
   override def persistenceId: String = self.path.parent.name + "-" + self.path.name
@@ -97,7 +108,7 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
         stateData.updated(evt)
     }
 
-  when(Initial) (timeout orElse {
+  when(Initial)(timeout orElse {
     case Event(AddPost(postId, content), stateData) =>
       if (content.author != "" && content.title != "") {
         log.debug("New post saved: {}", stateData.content.title)
@@ -116,13 +127,13 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
       goto(Published) applying PostPublished(postId)
   })
 
-  when(Published)(getContent orElse remove orElse timeout orElse  {
+  when(Published)(getContent orElse remove orElse timeout orElse {
     case Event(UpdateAuthor(_, newAuthor), stateData) =>
       log.info("Author changed: {}", stateData.content.author)
       stay() applying AuthorUpdated(newAuthor)
   })
 
-  when(Removed) (timeout orElse {
+  when(Removed)(timeout orElse {
     case Event(event, stateData) =>
       log.info("event {} has come into removed in FSM for the author: {}", event, stateData.content.author)
       stay()
@@ -138,7 +149,7 @@ class Post(authorListing: ActorRef) extends PersistentFSM[Status, StateData, Eve
     case Created -> Published =>
       val c = stateData.content
       log.info("Post published: {}", c.title)
-      val ps = AuthorListing.PostSummary(c.author, stateData.postId, c.title, OffsetDateTime.now())
+      val ps = AuthorListing.PostSummaryEx(c.author, stateData.postId, c.title, OffsetDateTime.now(), null)
       authorListing ! ps
   }
 

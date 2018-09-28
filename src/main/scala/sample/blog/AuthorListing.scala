@@ -1,6 +1,5 @@
 package sample.blog
 import java.time.OffsetDateTime
-
 import scala.collection.immutable
 import scala.concurrent.duration._
 import akka.actor.ActorLogging
@@ -11,16 +10,24 @@ import akka.cluster.sharding.{ClusterSharding, ShardRegion}
 import akka.cluster.sharding.ShardRegion.Passivate
 import akka.persistence.{PersistentActor, SnapshotOffer}
 import sample.blog.Post.Remove
-
 import scala.collection.mutable.ListBuffer
+
 object AuthorListing {
+
   def props(): Props = Props(new AuthorListing)
   sealed trait Command {
+
     def author: String
   }
   case class PostSummary(author: String, postId: String, title: String, published: OffsetDateTime) extends Command
+  case class PostSummaryEx(author: String, postId: String, title: String, published: OffsetDateTime, persisted: OffsetDateTime) extends Command
+  object PostSummaryEx {
+
+    def fromPostSummary(ps: PostSummary): PostSummaryEx =
+      PostSummaryEx(ps.author, ps.postId, ps.title, ps.published, null)
+  }
   case class GetPosts(author: String) extends Command
-  case class Posts(list: ListBuffer[PostSummary])
+  case class Posts(list: ListBuffer[PostSummaryEx])
   case class RemovePost(author: String, postId: String) extends Command
   case class RemoveFirstN(author: String, n: Int) extends Command
   val idExtractor: ShardRegion.ExtractEntityId = {
@@ -35,21 +42,22 @@ object AuthorListing {
 }
 class AuthorListing extends PersistentActor with ActorLogging {
   import AuthorListing._
+
   override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
   // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
 
-  var posts: ListBuffer[PostSummary] = ListBuffer.empty[PostSummary]
+  var posts: ListBuffer[PostSummaryEx] = ListBuffer.empty[PostSummaryEx]
 
   val snapShotInterval = 5
 
   private val postRegion = ClusterSharding(context.system).shardRegion(Post.shardName)
 
   def receiveCommand = {
-    case s: PostSummary =>
-      persist(s) { evt =>
-        posts+=evt
+    case s: PostSummaryEx =>
+      persist(s.copy(persisted = OffsetDateTime.now)) { evt =>
+        posts += evt
         log.info("Post added to {}'s list: {}", s.author, s.title)
         if (posts.size % snapShotInterval == 0 && lastSequenceNr != 0)
           saveSnapshot(posts)
@@ -72,13 +80,18 @@ class AuthorListing extends PersistentActor with ActorLogging {
   }
 
   override def receiveRecover: Receive = {
-    case evt: PostSummary => posts :+= evt
+    case evt: PostSummaryEx =>
+      posts :+= evt
     case r: RemovePost =>
       posts = posts.filter(ps => ps.postId != r.postId)
     case r: RemoveFirstN =>
       posts = posts.drop(r.n)
-    case SnapshotOffer(_, snapshot: ListBuffer[PostSummary]) ⇒
-      log.info("post snapshot offer, size {}", snapshot.size)
-      posts = snapshot
+    case so: SnapshotOffer =>
+      so.snapshot match {
+        case l: ListBuffer[PostSummary] if l.nonEmpty && l.head.isInstanceOf[PostSummary]=>
+          posts = l.map(a => PostSummaryEx.fromPostSummary(a))
+        case l: ListBuffer[PostSummaryEx] =>
+          posts = l
+      }
   }
 }
